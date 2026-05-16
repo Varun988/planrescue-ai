@@ -5,7 +5,7 @@ require("dotenv").config();
 const { connectToMongo } = require("./services/mongoService");
 const plansRouter = require("./routes/plans");
 const realityRouter = require("./routes/reality");
-
+const recoveryRouter = require("./routes/recovery");
 
 const app = express();
 
@@ -13,6 +13,8 @@ app.use(cors());
 app.use(express.json());
 app.use("/api/plans", plansRouter);
 app.use("/api/reality-check", realityRouter);
+
+app.use("/api/recovery", recoveryRouter);
 
 const PORT = process.env.PORT || 8080;
 
