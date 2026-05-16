@@ -1,6 +1,9 @@
 const express = require("express");
-const { recommendRecovery } = require("../services/recoveryService");
 
+const {
+  recommendRecovery,
+  applyRecoveryPlan
+} = require("../services/recoveryService");
 const router = express.Router();
 
 router.post("/recommend", async (req, res) => {
@@ -23,6 +26,35 @@ router.post("/recommend", async (req, res) => {
     res.json(recommendation);
   } catch (error) {
     console.error("Recovery recommendation failed:", error);
+
+    res.status(500).json({
+      status: "error",
+      message: error.message
+    });
+  }
+});
+
+router.post("/apply", async (req, res) => {
+  try {
+    const { plan_id, trigger, actions, approved_by_user } = req.body;
+
+    if (!approved_by_user) {
+      return res.status(400).json({
+        status: "approval_required",
+        message: "approved_by_user must be true before applying recovery."
+      });
+    }
+
+    const result = await applyRecoveryPlan({
+      plan_id,
+      trigger,
+      actions,
+      approved_by_user
+    });
+
+    res.json(result);
+  } catch (error) {
+    console.error("Apply recovery failed:", error);
 
     res.status(500).json({
       status: "error",

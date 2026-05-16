@@ -147,17 +147,19 @@ async function createDemoPlan() {
 async function getCurrentPlan() {
   const db = await getDb();
 
-  const plan = await db.collection("plans").findOne(
-    {
-      user_id: "demo_user",
-      status: "active"
-    },
-    {
-      sort: {
-        created_at: -1
-      }
+const plan = await db.collection("plans").findOne(
+  {
+    user_id: "demo_user",
+    status: {
+      $in: ["active", "recovered"]
     }
-  );
+  },
+  {
+    sort: {
+      updated_at: -1
+    }
+  }
+);
 
   if (!plan) {
     return {

@@ -1,3 +1,5 @@
+const { randomUUID } = require("crypto");
+const { getDb } = require("./mongoService");
 const { getCurrentPlan } = require("./planService");
 
 function getPendingTasks(tasks) {
@@ -54,10 +56,7 @@ function createRecoveryActions(tasks, remainingMinutes) {
       continue;
     }
 
-    if (
-      task.priority === "high" &&
-      estimatedMinutes <= remainingCapacity
-    ) {
+    if (task.priority === "high" && estimatedMinutes <= remainingCapacity) {
       actions.push({
         task_id: task.task_id,
         title: task.title,
@@ -83,17 +82,15 @@ function createRecoveryActions(tasks, remainingMinutes) {
         action: "shorten",
         original_minutes: estimatedMinutes,
         new_minutes: remainingCapacity,
-        reason: "Useful task, but full scope no longer fits. Recommended as a shorter progress block."
+        reason:
+          "Useful task, but full scope no longer fits. Recommended as a shorter progress block."
       });
 
       usedMinutes += remainingCapacity;
       continue;
     }
 
-    if (
-      task.category === "health" &&
-      remainingCapacity >= 10
-    ) {
+    if (task.category === "health" && remainingCapacity >= 10) {
       actions.push({
         task_id: task.task_id,
         title: task.title,
@@ -206,6 +203,122 @@ async function recommendRecovery({ remaining_minutes, current_time, trigger }) {
   };
 }
 
+async function applyRecoveryPlan({
+  plan_id,
+  trigger,
+  actions,
+  approved_by_user
+}) {
+  if (!approved_by_user) {
+    return {
+      status: "approval_required",
+      message: "Recovery plan was not applied because user approval is required."
+    };
+  }
+
+  if (!plan_id) {
+    throw new Error("plan_id is required");
+  }
+
+  if (!Array.isArray(actions) || actions.length === 0) {
+    throw new Error("actions array is required");
+  }
+
+  const db = await getDb();
+  const now = new Date().toISOString();
+
+  let updatedTasksCount = 0;
+
+  for (const action of actions) {
+    const update = {
+      rescue_action: action.action,
+      updated_at: now
+    };
+
+    if (action.action === "keep") {
+      update.status = "pending";
+
+      if (action.scheduled_start) {
+        update.scheduled_start = action.scheduled_start;
+      }
+
+      if (action.scheduled_end) {
+        update.scheduled_end = action.scheduled_end;
+      }
+    }
+
+    if (action.action === "shorten" || action.action === "convert") {
+      update.status = "pending";
+      update.estimated_minutes = action.new_minutes;
+
+      if (action.scheduled_start) {
+        update.scheduled_start = action.scheduled_start;
+      }
+
+      if (action.scheduled_end) {
+        update.scheduled_end = action.scheduled_end;
+      }
+    }
+
+    if (action.action === "defer") {
+      update.status = "deferred";
+      update.deferred_to = action.new_date || "tomorrow";
+      update.defer_reason = action.reason || "Deferred during plan rescue";
+    }
+
+    const result = await db.collection("tasks").updateOne(
+      {
+        task_id: action.task_id,
+        plan_id
+      },
+      {
+        $set: update,
+        ...(action.action === "defer" ? { $inc: { defer_count: 1 } } : {})
+      }
+    );
+
+    updatedTasksCount += result.modifiedCount;
+  }
+
+  const recoveryEvent = {
+    event_id: `recovery_${randomUUID()}`,
+    plan_id,
+    user_id: "demo_user",
+    trigger: trigger || "Recovery plan approved by user",
+    actions,
+    approved_by_user: true,
+    updated_tasks_count: updatedTasksCount,
+    created_at: now
+  };
+
+  await db.collection("recovery_events").insertOne(recoveryEvent);
+
+  await db.collection("plans").updateOne(
+    {
+      plan_id
+    },
+    {
+      $set: {
+        status: "recovered",
+        updated_at: now,
+        last_recovery_event_id: recoveryEvent.event_id
+      }
+    }
+  );
+
+  const updatedPlan = await getCurrentPlan();
+
+  return {
+    status: "recovery_applied",
+    message: "Recovery plan applied successfully.",
+    updated_tasks_count: updatedTasksCount,
+    recovery_event: recoveryEvent,
+    current_plan: updatedPlan.plan,
+    current_tasks: updatedPlan.tasks
+  };
+}
+
 module.exports = {
-  recommendRecovery
+  recommendRecovery,
+  applyRecoveryPlan
 };
